@@ -1,0 +1,152 @@
+---
+title: "Sentiment Analysis"
+author: "Alex"
+format: pdf
+---
+
+Natural Language Processing 101 Workshop Demo 2- Sentiment Analysis with VADER In this demo, we'll be performing exploratory analysis on the expressed emotional sentiment of r/nyc users as embedded within their comment text. We will use readr, dplylr, and stringr once again as these packages are core libraries across NLP use cases. We're also including the vader package which wraps the original VADER sentiment analyser written in Python for R as well as ggplot for simple data visualizations. Let's load them all in along with our r/nyc comment data set as follows:
+
+```{r}
+library(readr)
+library(dplyr)
+library(stringr)
+library(vader)
+library(ggplot2)
+
+nyc <- read_csv("r_nyc_10k.csv")
+```
+
+1.) Sentiment Scores Let’s consider three individual string examples in sequence to hone our intuition regarding how VADER generates its sentiment scores. VADER is our sentiment dictionary of choice since it is intentionally designed to account for structures within text that impact implied sentiment, as well as the unique features of social media language. These include:
+
+Negation with "I don't love" Emphasis with "I really love" Punctuation with "I love this!" Capitalization with "I LOVE this." Emoticons with "I love this. \<3"
+
+```{r}
+get_vader("As someone who always depended on cars before, I LOVE the subway! <3")
+```
+
+```{r}
+get_vader("The subway is very helpful, but I'm not a fan of the rats.")
+```
+
+```{r}
+get_vader("I hate how delayed the subway always is… being late for work sucks. :(")
+```
+
+We can see how each get_vader call generates both the individual scores of each word accounting for its polarity and valence along with positive, negative, neutral, and weighted average compound scores. There's also a "but_count" column to flag for sentiment negation- i.e. "it's okay, but not my favorite".
+
+The first string is scored strongly positive and is shown to account for both the capitalization of “love” and the heart emoticon. The second string has both a positive connotation through “helpful” but also a negative tone with “not a fan,” leading to a weakly negative compound score. The final string is accurately identified as strongly negative and successfully captures the intention behind the sad face emoticon. Given our validation of VADER’s classification scheme to text very similar to our r/nyc comments, let’s go ahead and create a data frame of the VADER metrics of each of our comments. VADER has a designated function to generate its four sentiment scores across a full column of text that can then be used to instantiate an entirely seperate data frame dedicated to the results. This actual process however can take quite some time, so I've went ahead and pre-generated the results to be loaded in directly from another CSV for easy access.
+
+```{r}
+# Don't actually run this- it takes a while to run 
+# nyc_sentiment <- vader_df(nyc$body)
+nyc_sentiment <- read_csv('r_nyc_10k_sentiment.csv')
+head(nyc_sentiment)
+```
+
+------------------------------------------------------------------------
+
+### Vader cutoff
+
+Here a new column is form to group sentiment base on ± 0.5 cutoffs on the vader scale of -1 to +1
+
+```{r}
+library(dplyr)
+library(vader)
+
+sent_multi <- nyc_sentiment |> 
+  select(text, compound, pos, neu, neg) |> 
+  mutate(sentiment = case_when(compound <= -0.5 ~ 'Negative',
+                               compound > -0.5 & compound < 0.5 ~ 'Neutral',
+                               compound >= 0.5 ~ 'Positive'))
+table(new_sent$sentiment)
+
+#write_csv(new_sent, "nyc_sentiments_multi.csv")
+
+###################################################
+
+# 3. Bind scores back and binarize
+sent_binary <- nyc_sentiment |> 
+  select(text, compound, pos, neu, neg) |> 
+  mutate(
+    sentiment = if_else(compound > 0, "positive", "negative"),
+    sentiment = factor(sentiment, levels = c("negative", "positive"))
+  )
+
+table(df_sent_binary$sentiment)
+
+#write_csv(sent_binary, "nyc_sentiments_binary.csv")
+```
+
+### syuzhet sentiment score
+
+```{r}
+# binary class
+
+library(dplyr)
+library(syuzhet)
+
+df_sent_binary <- nyc_sentiment  %>%
+  mutate(
+    syuzhet_score = get_sentiment(text, method = "syuzhet"),
+    syuzhet_score = scale(syuzhet_score),
+    sentiment     = if_else(
+                      syuzhet_score >  0, 
+                      "positive",
+                      "negative"
+                    )
+  ) %>%
+  mutate(
+    sentiment = factor(sentiment, 
+                       levels = c("negative", "positive"))
+  )
+table(df_sent_binary$sentiment)
+```
+
+vader score seems more stable with compound, neg, new & pos. syuzhet sentiment score may be unstable
+
+------------------------------------------------------------------------
+
+2.) Sentiment Variation Across r/nyc Now that we have generated scores for the entirety of our dataset, let’s investigate what the most high-scoring positive and negative posts are respectively. We’ll start on the positive side first through some dplyr-powered data frame manipulation:
+
+```{r}
+top_pos <- nyc_sentiment %>%
+    slice_max(pos, n = 5)
+
+top_pos
+```
+
+We can see phrases within the most positive comments under VADER’s classification that feature positively-coded words such as "help" and "luck", capitalization with "HA", and the ample use of exclamation points.
+
+Let’s replicate this for the most negative comments.
+
+```{r}
+top_neg <- nyc_sentiment %>%
+    slice_max(neg, n = 5)
+
+top_neg
+     
+```
+
+Here we equivalently find rather negatively connotated words such as "wrong" and "liar" as well as ample use of explicit language.
+
+3.) Expressed Sentiment, Upvotes, and Downvotes As a final exercise, we’ll explore whether there’s a relationship between an r/nyc post’s community score and its expressed sentiment as identified by VADER. Comments can either be upvoted or downvoted by other users. This produces a score that serves as a proxy for the collective community reaction to a given comment.
+
+To prepare for this analysis, I’ll first have to combine my separate data frames of the baseline Reddit data with the VADER scores by comment. Luckily, the 'body' column of comments can serve as a natural primary key for a simple join function.
+
+```{r}
+nyc_full <- merge(nyc, nyc_sentiment, by.x = "body", by.y = "text")
+```
+
+We'll can now explore the sentiment trends of comments with a positive upvote score of 20 through a ggplot scatter plot. You'll notice how the following code slices our dataset to our subpopulation of high-upvote comments.
+
+```{r}
+ggplot(nyc_full[which(nyc_full$score>20),], aes(x=compound, y=score)) + geom_point()
+```
+
+Let's look at the equivalent for sentiment among posts that received a negative downvote score. We'll use the same ggplot call script by adjusting our conditional slice to capture the negative-scoring poster subgroup.
+
+```{r}
+ggplot(nyc_full[which(nyc_full$score<0),], aes(x=compound, y=score)) + geom_point()
+```
+
+And that's the fundamentals of exploring text data with a dictionary-based sentiment analyzer! As you can imagine there's a wide range of further extensions you can build from these foundations- looking at sentiment over time, across subgroups, before and after significant events, and beyond. Let's now return to our discussion of additional NLP methods back in the main workshop slides.
