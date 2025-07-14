@@ -10,7 +10,7 @@ library(tidyverse)
 library(themis)
 
 # 2. Load Data ----
-data <- read_csv("nyc_sentiments_multi.csv")
+data <- read_csv("Datasets/nyc_sentiments_multi.csv")
 colSums(is.na(data))
 
 data <- data |> 
@@ -30,7 +30,7 @@ table(train_data$sentiment)
 text_rec <- recipe(sentiment ~ text + compound, data = train_data) %>%
   step_tokenize(text) %>%
   step_stopwords(text) %>%
-  step_tokenfilter(text, max_tokens = 1000) %>%
+  step_tokenfilter(text, max_tokens = 500) %>%
   step_tfidf(text) |> 
   step_zv() |> 
   step_downsample(sentiment, under_ratio = 1)
@@ -57,12 +57,13 @@ glmnet_wf   <- workflow() %>%
   add_recipe(text_rec) %>%
   add_model(multinom_spec)
 
+set.seed(223)
 cv_splits <- vfold_cv(train_data, v = 5, strata = sentiment)
 
 # 7. Hyperparameter Grid & Tuning ----
 grid_vals <- grid_random(
-  penalty(range = c(-1, 1)),  # Log scale for penalty
-  mixture(range = c(0, 1)),
+  penalty(),  # Log scale for penalty
+  mixture(),
   size = 10
 )
 
@@ -92,7 +93,7 @@ glmnet_tune %>%
 
 # 8. Finalize and Refit ----
 glmnet_best <- select_best(glmnet_tune, metric = "roc_auc")
-glmnet_wf   <- finalize_workflow(nlp_wf, glmnet_best)
+glmnet_wf   <- finalize_workflow(glmnet_wf, glmnet_best)
 glmnet_fit  <- fit(glmnet_wf, data = train_data)
 
 
@@ -115,6 +116,7 @@ glmnet_matrics <- glmnet_test_pred %>%
   test_metrics(truth = sentiment, 
                estimate = .pred_class, 
                .pred_Negative:.pred_Positive)
+glmnet_matrics
 
 
 # 10. Interpret Model ----
