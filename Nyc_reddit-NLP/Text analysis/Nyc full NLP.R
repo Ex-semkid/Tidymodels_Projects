@@ -1,5 +1,5 @@
 # Install if necessary
-pacman::p_load("tidyverse", "tidytext", "textdata", 
+pacman::p_load("tidyverse", "tidytext", "textdata", "quanteda",
                "topicmodels", "wordcloud", "ggraph", "igraph")
 
 # Load libraries
@@ -13,7 +13,7 @@ library(ggraph)      # Used for network plotting (e.g., ggraph, geom_edge_link).
 
 
 # Example: Import a CSV of documents
-docs <- read_csv("r_nyc_10k.csv")
+docs <- read_csv("Datasets/r_nyc_10k.csv")
 
 
 # 2. Preprocessing & Tokenization
@@ -29,10 +29,11 @@ clean_tokens <- tidy_docs %>%
   filter(!word %in% stop_words$word) %>%
   filter(str_detect(word, "^[a-z']+$"))
 
+# 2.3 Stemming
 #stems <- clean_tokens %>%
- # mutate(stem = SnowballC::wordStem(word, language = "en"))
-
+#  mutate(stem = SnowballC::wordStem(word, language = "en"))
 #head(stems)
+
 
 
 # 3. Term Frequency & TF‐IDF
@@ -49,7 +50,6 @@ tfidf <- term_freq %>%
 # 4. Sentiment Analysis
 # Using NRC lexicon
 nrc <- get_sentiments("nrc")
-
 
 sentiment_scores1 <- clean_tokens %>%
   inner_join(nrc, by = "word") %>%
@@ -87,15 +87,44 @@ bigram_counts <- bigrams_separated %>%
 
 bigram_graph <- bigram_counts %>% 
   drop_na() |> 
-  filter(n > 15) %>%
-  graph_from_data_frame()
+  filter(n > 20) %>%
+igraph::graph_from_data_frame()
 
-ggraph(bigram_graph, layout = "treemap") +
-  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE) +
-  geom_node_point(color = "coral", size = 5) +
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_width = n), show.legend = FALSE) +
+  geom_node_point(color = "coral", size = 3) +
   geom_node_text(aes(label = name), repel = TRUE) +
   theme_void()
 
+#--------------------------------------------------
+
+trigrams <- docs %>%
+  unnest_tokens(trigram, body, token = "ngrams", n = 3)
+
+# Separate words, filter stop words
+trigrams_separated <- trigrams %>%
+  separate(trigram, into = c("w1","w2", "w3"), sep = " ") %>%
+  filter(!w1 %in% stop_words$word,
+         !w2 %in% stop_words$word,
+         !w3 %in% stop_words$word)
+
+trigrams_counts <- trigrams_separated %>%
+  count(w1, w2, w3, sort = TRUE)
+
+trigrams_graph <- trigrams_counts %>% 
+  drop_na() |> 
+  filter(n > 2) %>%
+  graph_from_data_frame()
+
+
+#  Plot with ggraph
+ggraph(trigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = weight), show.legend = FALSE) +
+  geom_node_point(size = 3, color = "coral") +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+
+#--------------------------------------------------
 
 # 6. Topic Modeling with LDA
 # 6.1 Create DTM using quanteda
@@ -121,7 +150,7 @@ dtm <- docs %>%
   mutate(document = paste(author, id, sep = "_")) %>%
   tidytext::cast_dtm(document, word, n)
 
-lda_model <- LDA(dtm, k = 4, control = list(seed = 369))
+lda_model <- topicmodels::LDA(dtm, k = 4, control = list(seed = 369))
 
 
 # 6.3 Extract top terms per topic
@@ -147,15 +176,24 @@ top_terms <- terms(lda_model, 10)   # Top 10 terms per topic
 print(top_terms)
 
 
-# 6.5 Draw the word cloud
+# 6.6 Draw the word cloud
 set.seed(369)   # for reproducible layout
 wordcloud::wordcloud(
   words       = top_terms,
   scale       = c(5, 1),      # range of word sizes
-  min.freq    = 10,           # only words with freq >= 10
+  min.freq    = 2,            # only words with freq >= 2
+  max.words   = 4,            # show all words
   random.order= FALSE,        # plot high-freq words at center
-  rot.per     = 0.45,         # 30% of words rotated 90°
-  colors      = brewer.pal(8, "Dark2")
+  rot.per     = 0.45,         # 77% of words rotated 90°
+  colors      = brewer.pal(7, "Paired")
+) 
+
+# Add a title
+par(mar = c(0, 0, 10, 0))
+title(
+  main   = "Top 4 Frequent Terms", 
+  col.main = "darkblue", 
+  font.main = 2
 )
 
 
@@ -166,20 +204,36 @@ set.seed(369)
 tfidf %>%
   with(wordcloud(word = word,
                  scale       = c(5, 1),    # range of word sizes
-                 min.freq    = 100,        # only words with freq >= 100
+                 min.freq    = 10,         # only words with freq >= 10
                  max.words   = 100,        # show all words
                  random.order= FALSE,      # plot high-freq words at center
-                 rot.per     = 0.45,       # 30% of words rotated 90°
-                 colors      = brewer.pal(8, "Dark2")))
+                 rot.per     = 0.45,       # 45% of words rotated 90°
+                 colors      = brewer.pal(7, "Dark2")))
+
+# Add a title
+par(mar = c(0, 0, 3, 0))
+title(
+  main   = "Top 100 Frequent Terms", 
+  col.main = "darkblue", 
+  font.main = 2
+)
+
 
 
 # 7.2 Sentiment bar chart
 sentiment_scores %>%
-  gather(sentiment, count, -id) %>%
+  pivot_longer(                            
+    cols        = 3:12,                    # pivot all sentiment columns
+    names_to    = "sentiment",
+    values_to   = "count"
+  ) %>%
   group_by(sentiment) %>%
-  summarize(total = sum(count)) %>%
+  summarize(
+    total   = sum(count, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
   ggplot(aes(reorder(x = sentiment, total), y = total, fill = sentiment)) +
-  geom_col(show.legend = FALSE) +
+  geom_col(show.legend = FALSE) + theme_classic() +
   coord_flip() +
-  labs(x = "Sentiment", y = "Total Count")
+  labs(x = "Sentiment", y = "Total Count", title = "Sentiment Distribution")
 
